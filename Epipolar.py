@@ -2,8 +2,8 @@ import numpy as np
 import cv2 
 from matplotlib import pyplot as plt
 
-img1 = cv2.imread('phone_left.jpg', cv2.IMREAD_GRAYSCALE)  #queryimage # left image
-img2 = cv2.imread('phone_right.jpg', cv2.IMREAD_GRAYSCALE) #trainimage # right image
+img1 = cv2.imread('tomato1a.jpg', cv2.IMREAD_GRAYSCALE)  #queryimage # left image
+img2 = cv2.imread('tomato1b.jpg', cv2.IMREAD_GRAYSCALE) #trainimage # right image
 
 sift = cv2.SIFT_create()
 
@@ -18,7 +18,7 @@ search_params = dict(checks=50)
 
 flann = cv2.FlannBasedMatcher(index_params,search_params)
 matches = flann.knnMatch(des1,des2,k=2)
-
+print(matches)
 pts1 = []
 pts2 = []
 
