@@ -60,11 +60,11 @@ while True:
     if not ret:
         break
 
-    # Convert to HSV color space
+    # Convert to HSV 
     blurred = cv2.GaussianBlur(frame, (5,5), 0)
     hsv = cv2.cvtColor(blurred, cv2.COLOR_BGR2HSV)
     
-    # Create mask for the specified color range
+    # Create mask for the specified colour range
     mask = cv2.inRange(hsv, lower_colour, upper_colour)
     
     # Denoise
@@ -79,7 +79,7 @@ while True:
     centres = []
 
     if len(contours) > 0:
-        # Sort contours by area and get the largest N contours
+        # Sort contours by area and get the largest N number
         sorted_contours = sorted(contours, key=cv2.contourArea, reverse=True)[:num_objects]
         
         for i, cnt in enumerate(sorted_contours):
