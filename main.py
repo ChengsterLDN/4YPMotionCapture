@@ -61,7 +61,9 @@ while True:
         break
 
     # Convert to HSV color space
-    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+    #frame = cv2.convertScaleAbs(frame, alpha=1.3, beta=20)
+    blurred = cv2.GaussianBlur(frame, (5,5), 0)
+    hsv = cv2.cvtColor(blurred, cv2.COLOR_BGR2HSV)
     
     # Create mask for the specified color range
     mask = cv2.inRange(hsv, lower_colour, upper_colour)
@@ -109,7 +111,7 @@ while True:
             continue
     """
     # Display the original frame with tracking boxes
-    cv2.imshow('Colour Tracking', frame)
+    cv2.imshow('Colour Tracking', mask)
 
     # Escape via keypress
     k = cv2.waitKey(30) & 0xff
