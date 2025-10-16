@@ -1,5 +1,6 @@
 import cv2
 import numpy as np
+import math
 
 capture = cv2.VideoCapture('stickTest.mp4')
 
@@ -54,7 +55,73 @@ cv2.destroyWindow('Select region for colour sampling')
 # reset
 capture.set(cv2.CAP_PROP_POS_FRAMES, 0)
 
+# determine initial distance
+ret, cal_frame = capture.read()
+if not ret:
+    print("Error reading calibration frame")
+    exit()
+
+# Process first frame to find objects for calibration
+cal_blurred = cv2.GaussianBlur(cal_frame, (5,5), 0)
+cal_hsv = cv2.cvtColor(cal_blurred, cv2.COLOR_BGR2HSV)
+cal_mask = cv2.inRange(cal_hsv, lower_colour, upper_colour)
+
+# Denoise calibration frame
+cal_kernel = np.ones((5, 5), np.uint8)
+cal_mask = cv2.morphologyEx(cal_mask, cv2.MORPH_CLOSE, cal_kernel, anchor=(-1,-1), iterations=20)
+cal_mask = cv2.morphologyEx(cal_mask, cv2.MORPH_OPEN, cal_kernel, anchor=(-1,-1), iterations=5)
+cal_contours, _ = cv2.findContours(cal_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+# Find objects in calibration frame
+cal_centres = []
+if len(cal_contours) >= 2:
+    sorted_contours = sorted(cal_contours, key=cv2.contourArea, reverse=True)[:2]
+    
+    for cnt in sorted_contours:
+        M = cv2.moments(cnt)
+        if M['m00'] != 0:
+            centre_x = int(M['m10'] / M['m00'])
+            centre_y = int(M['m01'] / M['m00'])
+            cal_centres.append((centre_x, centre_y))
+    
+    if len(cal_centres) == 2:
+        # Calculate initial distance in pixels
+        x1, y1 = cal_centres[0]
+        x2, y2 = cal_centres[1]
+        initial_distance_px = math.sqrt((x2 - x1)**2 + (y2 - y1)**2)
+        
+        print(f"Initial distance between objects: {initial_distance_px:.2f} pixels")
+        
+        # Ask user for real-world distance
+        real_distance = float(input("Enter the real-world distance between objects (metres): "))
+        pixels_per_metre = initial_distance_px / real_distance
+        print(f"Calibration: {pixels_per_metre:.2f} pixels per metre")
+        
+        # Show calibration frame with distance
+        cv2.line(cal_frame, cal_centres[0], cal_centres[1], (0, 255, 0), 2)
+        cv2.putText(cal_frame, f'Calibration: {initial_distance_px:.1f} px = {real_distance:.3f} m', 
+                   (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+        cv2.imshow('Calibration Frame', cal_frame)
+        cv2.waitKey(1000)  # Show for 1 second
+        cv2.destroyWindow('Calibration Frame')
+    else:
+        print("Could not find two objects for calibration")
+        pixels_per_metre = None
+        real_distance = None
+else:
+    print("Could not find enough objects for calibration")
+    pixels_per_metre = None
+    real_distance = None
+
+# Reset capture to beginning for main loop
+capture.set(cv2.CAP_PROP_POS_FRAMES, 0)
+
 trail = []
+
+initial_distance = None
+frame_count = 0
+fps = capture.get(cv2.CAP_PROP_FPS) or 30
+
 while True:
     ret, frame = capture.read()
     if not ret:
@@ -95,7 +162,36 @@ while True:
                 cv2.circle(frame, center=centre, radius=5, color=(0, 255, 0), thickness=2)
                 cv2.putText(frame, f'Object {i+1}', (centre[0], centre[1] - 10), 
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
-        
+        # Calculate and display distance between objects
+        if len(centres) == 2:
+            x1, y1 = centres[0]
+            x2, y2 = centres[1]
+            distance = math.sqrt((x2 - x1)**2 + (y2 - y1)**2)
+
+             # Calculate velocity if we have a previous frame to compare with
+            if len(trail) > 0 and len(trail[-1]) == 2:
+                prev_x1, prev_y1 = trail[-1][0]
+                prev_x2, prev_y2 = trail[-1][1]
+                
+                # Calculate displacement of the midpoint
+                mid_x = (x1 + x2) / 2
+                mid_y = (y1 + y2) / 2
+                prev_mid_x = (prev_x1 + prev_x2) / 2
+                prev_mid_y = (prev_y1 + prev_y2) / 2
+                
+                displacement = math.sqrt((mid_x - prev_mid_x)**2 + (mid_y - prev_mid_y)**2)
+                velocity_pixels_per_second = displacement * fps
+                
+                if 'pixels_per_metre' is not None:
+                    velocity_m_per_second = velocity_pixels_per_second / pixels_per_metre
+                    # Display velocity in both pixels and metres
+                    cv2.putText(frame, f'Velocity: {velocity_m_per_second:.2f} m/s', 
+                            (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                else:
+                    # Fallback to pixels only if calibration not done
+                    cv2.putText(frame, f'Velocity: {velocity_pixels_per_second:.2f} px/s', 
+                            (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+            
         # Draw lines between all detected centres
         if len(centres) > 1:
             for i in range(len(centres)):
@@ -127,7 +223,7 @@ canvas = np.zeros((height, width, 3)) + 255
 cv2.namedWindow('Trace', cv2.WINDOW_AUTOSIZE)
 
 # Colour list - do we need this?
-colours = [(255, 0, 0), (0, 255, 0), (0, 0, 255), (255, 255, 0), (255, 0, 255)]
+trail_col = (0,0,255) #Red
 
 # Draw lines between corresponding objects across frames
 for i in range(len(trail) - 1):
@@ -139,8 +235,7 @@ for i in range(len(trail) - 1):
             if pair_idx < len(trail[i]) and pair_idx < len(trail[i+1]):
                 x1, y1 = trail[i][pair_idx]
                 x2, y2 = trail[i+1][pair_idx]
-                colour = colours[pair_idx % len(colours)]
-                cv2.line(canvas, (int(x1), int(y1)), (int(x2), int(y2)), colour, 2)
+                cv2.line(canvas, (int(x1), int(y1)), (int(x2), int(y2)), trail_col, 2)
 
 # Draw connecting lines between objects within each frame
 for frame_centres in trail:
@@ -148,11 +243,10 @@ for frame_centres in trail:
         # Draw lines between all objects in this frame
         for i in range(len(frame_centres)):
             for j in range(i+1, len(frame_centres)):
-                colour = colours[(i + j) % len(colours)]
                 cv2.line(canvas, 
                         (int(frame_centres[i][0]), int(frame_centres[i][1])),
                         (int(frame_centres[j][0]), int(frame_centres[j][1])),
-                        colour, 1)
+                        trail_col, 1)
 
 cv2.imshow("Trace", canvas)
 cv2.waitKey(0)

@@ -118,7 +118,7 @@ while True:
     if k == 27:
         break
 capture.release()
-
+"""
 # Traced Outline
 if ret:
     height, width = frame.shape[:2]
@@ -131,5 +131,5 @@ for i in range(len(trail) - 1):
     trail_x1, trail_y1 = trail[i]
     trail_x2, trail_y2 = trail[i+1]
     cv2.line(canvas, (int(trail_x1), int(trail_y1)), (int(trail_x2), int(trail_y2)), (255,0,0), 2)
-cv2.imshow("Trace", canvas)
+cv2.imshow("Trace", canvas)"""
 cv2.waitKey(0) 
