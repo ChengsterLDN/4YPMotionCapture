@@ -85,13 +85,13 @@ prevCentroidsR = nan(numColors,2);
 maxMove = 50; % maximum pixels allowed per frame
 
 %% --- Setup folders and video writers ---
-if ~exist('Camera1','dir'), mkdir('Camera1'); end
-if ~exist('Camera2','dir'), mkdir('Camera2'); end
+if ~exist('Camera1Video','dir'), mkdir('Camera1Video'); end
+if ~exist('Camera2Video','dir'), mkdir('Camera2Video'); end
 if ~exist('trajectories','dir'), mkdir('trajectories'); end
 
 timestamp = datestr(now,'yyyymmdd_HHMMSS');
-leftVideoFile  = fullfile('Camera1', ['leftCam_' timestamp '.avi']);
-rightVideoFile = fullfile('Camera2', ['rightCam_' timestamp '.avi']);
+leftVideoFile  = fullfile('Camera1Video', ['Cam1_' timestamp '.avi']);
+rightVideoFile = fullfile('Camera2Video', ['Cam2_' timestamp '.avi']);
 
 vwLeft = VideoWriter(leftVideoFile);
 vwLeft.FrameRate = 30;  
@@ -194,6 +194,8 @@ while true
         prevCentroidsR(c,:) = centroidsR(c,:);
 
         % Triangulate 3D
+        
+
         if all(~isnan([centroidsL(c,:) centroidsR(c,:)]))
             point3D = triangulate(centroidsL(c,:), centroidsR(c,:), stereoParams);
             positions3D{c} = [positions3D{c}; point3D];
@@ -227,7 +229,8 @@ while true
             end
         end
         title('Right Camera'); hold off;
-
+        
+        scale = 1.53;
         % 3D Trajectories
         subplot(1,3,3); hold on;
         for c = 1:numColors
@@ -236,8 +239,8 @@ while true
             plot3(pts(valid,1), pts(valid,2), pts(valid,3), '.-', 'Color', RGBList(c,:), 'LineWidth', 1.5);
         end
         xlabel('X (mm)'); ylabel('Y (mm)'); zlabel('Z (mm)');
-        grid on; axis equal;
-        title('3D Trajectories'); view(0,-90); hold off;
+        grid on;
+        title('3D Trajectories'); view(20,30); hold off;
 
         drawnow;
     end
