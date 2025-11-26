@@ -12,12 +12,14 @@ if not ret:
 # Ask user how many objects to track
 num_objects = int(input("Enter the number of objects to track: "))
 
-# Lists to store color ranges for each object
+# Lists to store color ranges and ROI positions for each object
 lower_colors = []
 upper_colors = []
 object_names = []
+roi_positions = []  # Store ROI positions for each object
+roi_size = 50  # Size of ROI for dynamic color updating
 
-# Multiple colour sampling for each object
+# Multiple colour sampling for each object (initial sampling)
 for i in range(num_objects):
     print(f"\nSelect color for Object {i+1}")
     roi = cv2.selectROI(f'Select region for Object {i+1}', frame, False)
@@ -29,9 +31,14 @@ for i in range(num_objects):
         hue = default_hues[i % len(default_hues)]
         lower_color = np.array([hue - 10, 100, 100])
         upper_color = np.array([hue + 10, 255, 255])
+        # Use center of frame as default position
+        h, w = frame.shape[:2]
+        default_roi = (w//2 - 25, h//2 - 25, 50, 50)
+        roi_positions.append(default_roi)
     else:
         # Extract ROI
         x, y, w, h = [int(i) for i in roi]
+        roi_positions.append((x, y, w, h))
         colour_sample = frame[y:y+h, x:x+w]
 
         sample_hsv = cv2.cvtColor(colour_sample, cv2.COLOR_BGR2HSV)
@@ -53,7 +60,7 @@ for i in range(num_objects):
                               min(255, s_high + s_range), 
                               min(255, v_high + v_range)])
         
-        print(f"Object {i+1} color range:")
+        print(f"Object {i+1} initial color range:")
         print(f"H: {lower_color[0]:.1f} - {upper_color[0]:.1f}")
         print(f"S: {lower_color[1]:.1f} - {upper_color[1]:.1f}")
         print(f"V: {lower_color[2]:.1f} - {upper_color[2]:.1f}")
@@ -77,64 +84,63 @@ if not ret:
 cal_blurred = cv2.GaussianBlur(cal_frame, (5, 5), 0)
 cal_hsv = cv2.cvtColor(cal_blurred, cv2.COLOR_BGR2HSV)
 
-# Find all objects in calibration frame
-cal_centres = []
-for i in range(num_objects):
-    cal_mask = cv2.inRange(cal_hsv, lower_colors[i], upper_colors[i])
-    
-    # Denoise calibration frame
-    cal_kernel = np.ones((5, 5), np.uint8)
-    cal_mask = cv2.morphologyEx(cal_mask, cv2.MORPH_CLOSE, cal_kernel, anchor=(-1, -1), iterations=20)
-    cal_mask = cv2.morphologyEx(cal_mask, cv2.MORPH_OPEN, cal_kernel, anchor=(-1, -1), iterations=5)
-    cal_contours, _ = cv2.findContours(cal_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    
-    if len(cal_contours) > 0:
-        # Find largest contour for this color
-        largest_contour = max(cal_contours, key=cv2.contourArea)
-        M = cv2.moments(largest_contour)
-        if M['m00'] != 0:
-            centre_x = int(M['m10'] / M['m00'])
-            centre_y = int(M['m01'] / M['m00'])
-            cal_centres.append((centre_x, centre_y, i))  # Store with object index
-        else:
-            cal_centres.append((0, 0, i))  # Placeholder if not found
-    else:
-        cal_centres.append((0, 0, i))  # Placeholder if not found
+# Line drawing calibration
+calibration_points = []
+cal_frame_copy = cal_frame.copy()
 
-# Calculate initial distances between consecutive objects
-initial_distances = []
-if len(cal_centres) >= 2:
-    for i in range(len(cal_centres) - 1):
-        x1, y1, idx1 = cal_centres[i]
-        x2, y2, idx2 = cal_centres[i + 1]
-        distance_px = math.sqrt((x2 - x1)**2 + (y2 - y1)**2)
-        initial_distances.append(distance_px)
-        
-        print(f"Initial distance between {object_names[idx1]} and {object_names[idx2]}: {distance_px:.2f} pixels")
+def mouse_callback(event, x, y, flags, param):
+    if event == cv2.EVENT_LBUTTONDOWN:
+        if len(calibration_points) < 2:
+            calibration_points.append((x, y))
+            cv2.circle(cal_frame_copy, (x, y), 5, (0, 0, 255), -1)
+            if len(calibration_points) == 2:
+                # Draw the line when both points are selected
+                cv2.line(cal_frame_copy, calibration_points[0], calibration_points[1], (0, 255, 0), 2)
+                # Calculate and display distance
+                distance_px = math.sqrt((calibration_points[1][0] - calibration_points[0][0])**2 + 
+                                      (calibration_points[1][1] - calibration_points[0][1])**2)
+                mid_x = (calibration_points[0][0] + calibration_points[1][0]) // 2
+                mid_y = (calibration_points[0][1] + calibration_points[1][1]) // 2
+                cv2.putText(cal_frame_copy, f'{distance_px:.1f} px', 
+                           (mid_x, mid_y), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 0), 2)
+                cv2.putText(cal_frame_copy, 'Press any key to continue', 
+                           (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
 
-# Ask user for real-world distance between first two objects for calibration
-if len(initial_distances) > 0:
-    real_distance = float(input("Enter the real-world distance between the first two objects (metres): "))
-    pixels_per_metre = initial_distances[0] / real_distance
+print("Click two points to draw a calibration line")
+cv2.namedWindow('Calibration - Draw Line')
+cv2.setMouseCallback('Calibration - Draw Line', mouse_callback)
+
+while True:
+    cv2.imshow('Calibration - Draw Line', cal_frame_copy)
+    key = cv2.waitKey(1) & 0xFF
+    if len(calibration_points) == 2 and key != 255:  # Any key pressed
+        break
+    if key == 27:  # ESC key
+        break
+
+cv2.destroyWindow('Calibration - Draw Line')
+
+if len(calibration_points) == 2:
+    # Calculate pixel distance
+    distance_px = math.sqrt((calibration_points[1][0] - calibration_points[0][0])**2 + 
+                          (calibration_points[1][1] - calibration_points[0][1])**2)
+    
+    # Ask user for real-world distance
+    real_distance = float(input("Enter the real-world distance for the drawn line (metres): "))
+    pixels_per_metre = distance_px / real_distance
+    
+    print(f"Calibration line: {distance_px:.2f} pixels = {real_distance:.3f} metres")
     print(f"Calibration: {pixels_per_metre:.2f} pixels per metre")
     
-    # Show calibration frame with distances
-    for i in range(len(cal_centres) - 1):
-        x1, y1, idx1 = cal_centres[i]
-        x2, y2, idx2 = cal_centres[i + 1]
-        cv2.line(cal_frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-        mid_x = (x1 + x2) // 2
-        mid_y = (y1 + y2) // 2
-        cv2.putText(cal_frame, f'{initial_distances[i]:.1f}px', 
-                   (mid_x, mid_y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
-    
-    cv2.putText(cal_frame, f'Calibration: {initial_distances[0]:.1f} px = {real_distance:.3f} m', 
+    # Show final calibration frame
+    cv2.putText(cal_frame, f'Calibration: {distance_px:.1f} px = {real_distance:.3f} m', 
                (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
-    cv2.imshow('Calibration Frame', cal_frame)
+    cv2.line(cal_frame, calibration_points[0], calibration_points[1], (0, 255, 0), 2)
+    cv2.imshow('Calibration Result', cal_frame)
     cv2.waitKey(1000)  # Show for 1 second
-    cv2.destroyWindow('Calibration Frame')
+    cv2.destroyWindow('Calibration Result')
 else:
-    print("Could not find enough objects for calibration")
+    print("Calibration was not completed")
     pixels_per_metre = None
     real_distance = None
 
@@ -159,6 +165,55 @@ object_colors = [
     (255, 165, 0),  # Orange
 ]
 
+# Function to update color sampling based on current position
+def update_color_sampling(frame, centre, roi_size, current_lower, current_upper):
+    if centre is None:
+        return current_lower, current_upper
+        
+    x, y = centre
+    h, w = frame.shape[:2]
+    
+    # Ensure ROI stays within frame bounds
+    x1 = max(0, x - roi_size//2)
+    y1 = max(0, y - roi_size//2)
+    x2 = min(w, x + roi_size//2)
+    y2 = min(h, y + roi_size//2)
+    
+    roi_width = x2 - x1
+    roi_height = y2 - y1
+    
+    if roi_width > 0 and roi_height > 0:
+        colour_sample = frame[y1:y2, x1:x2]
+        sample_hsv = cv2.cvtColor(colour_sample, cv2.COLOR_BGR2HSV)
+        
+        # Calculate min, max and standard deviation of ROI colour
+        h_low, h_high, h_std = np.min(sample_hsv[:,:,0]), np.max(sample_hsv[:,:,0]), np.std(sample_hsv[:,:,0])
+        s_low, s_high, s_std = np.min(sample_hsv[:,:,1]), np.max(sample_hsv[:,:,1]), np.std(sample_hsv[:,:,1])
+        v_low, v_high, v_std = np.min(sample_hsv[:,:,2]), np.max(sample_hsv[:,:,2]), np.std(sample_hsv[:,:,2])
+
+        # Define colour range based on min/max ± 2*std
+        h_range = 2 * h_std
+        s_range = 2 * s_std
+        v_range = 2 * v_std
+        
+        new_lower = np.array([max(0, h_low - h_range), 
+                            max(0, s_low - s_range), 
+                            max(0, v_low - v_range)])
+        new_upper = np.array([min(255, h_high + h_range), 
+                            min(255, s_high + s_range), 
+                            min(255, v_high + v_range)])
+        
+        # Blend with previous color range for stability (80% new, 20% old)
+        blended_lower = (new_lower * 0.8 + current_lower * 0.2).astype(np.uint8)
+        blended_upper = (new_upper * 0.8 + current_upper * 0.2).astype(np.uint8)
+        
+        return blended_lower, blended_upper
+    
+    return current_lower, current_upper
+
+# Store previous centers for proximity checking
+previous_centres = [None] * num_objects
+
 while True:
     ret, frame = capture.read()
     if not ret:
@@ -181,25 +236,64 @@ while True:
         mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, anchor=(-1, -1), iterations=5)
         contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         
+        current_centre = None
         if len(contours) > 0:
-            # Find largest contour for this color
-            largest_contour = max(contours, key=cv2.contourArea)
-            M = cv2.moments(largest_contour)
-            if M['m00'] != 0:
-                centre_x = int(M['m10'] / M['m00'])
-                centre_y = int(M['m01'] / M['m00'])
-                centre = (centre_x, centre_y)
-                centres.append(centre)
+            # Find all potential contours for this color
+            potential_contours = []
+            for contour in contours:
+                M = cv2.moments(contour)
+                if M['m00'] != 0:
+                    centre_x = int(M['m10'] / M['m00'])
+                    centre_y = int(M['m01'] / M['m00'])
+                    potential_contours.append((contour, (centre_x, centre_y)))
+            
+            # If we have previous position, prefer contour closest to it
+            if previous_centres[i] is not None and len(potential_contours) > 0:
+                # Find contour closest to previous position
+                min_distance = float('inf')
+                best_contour = None
+                best_centre = None
                 
-                # Draw circle and label for each object with unique color
-                color = object_colors[i % len(object_colors)]
-                cv2.circle(frame, center=centre, radius=5, color=color, thickness=2)
-                cv2.putText(frame, object_names[i], (centre[0], centre[1] - 10), 
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+                for contour, centre in potential_contours:
+                    distance = math.sqrt((centre[0] - previous_centres[i][0])**2 + 
+                                       (centre[1] - previous_centres[i][1])**2)
+                    if distance < min_distance:
+                        min_distance = distance
+                        best_contour = contour
+                        best_centre = centre
+                
+                current_centre = best_centre
             else:
-                centres.append(None)
-        else:
-            centres.append(None)
+                # No previous position, use largest contour
+                largest_contour = max(contours, key=cv2.contourArea)
+                M = cv2.moments(largest_contour)
+                if M['m00'] != 0:
+                    centre_x = int(M['m10'] / M['m00'])
+                    centre_y = int(M['m01'] / M['m00'])
+                    current_centre = (centre_x, centre_y)
+        
+        centres.append(current_centre)
+        
+        # Update color sampling based on current position
+        if current_centre is not None:
+            lower_colors[i], upper_colors[i] = update_color_sampling(
+                frame, current_centre, roi_size, lower_colors[i], upper_colors[i])
+            
+            # Draw circle and label for each object with unique color
+            color = object_colors[i % len(object_colors)]
+            cv2.circle(frame, center=current_centre, radius=5, color=color, thickness=2)
+            cv2.putText(frame, object_names[i], (current_centre[0], current_centre[1] - 10), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+            
+            x, y = current_centre
+            roi_x1 = max(0, x - roi_size//2)
+            roi_y1 = max(0, y - roi_size//2)
+            roi_x2 = min(frame.shape[1], x + roi_size//2)
+            roi_y2 = min(frame.shape[0], y + roi_size//2)
+            cv2.rectangle(frame, (roi_x1, roi_y1), (roi_x2, roi_y2), color, 1)
+    
+    # Update previous centres for next frame
+    previous_centres = centres.copy()
     
     # Draw lines between consecutive objects (1-2, 2-3, etc.)
     valid_centres = [c for c in centres if c is not None]
@@ -251,7 +345,7 @@ while True:
     trail.append(tuple(centres))
     
     # Display the original frame with tracking
-    cv2.imshow('Multi-Object Tracking', frame)
+    cv2.imshow('Multi-Object Tracking with Adaptive Color', frame)
     
     # Escape via keypress
     k = cv2.waitKey(30) & 0xff
