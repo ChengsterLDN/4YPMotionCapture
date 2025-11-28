@@ -8,6 +8,9 @@ class ColourPicker:
     def __init__(self):
         self.selected_colours = []
         self.current_frame = None
+        self.drawing_rect = False
+        self.rectangles = []
+        self.start_x, self.start_y = -1, -1
         
     def mouse_callback(self, event, x, y, flags, param):
         if event == cv2.EVENT_LBUTTONDOWN:
@@ -32,6 +35,48 @@ class ColourPicker:
             
             cv2.imshow('Click on markers. Press SPACE when done', frame_with_marker)
             print(f"Selected colour {len(self.selected_colours)}: BGR {color_bgr}")
+
+class RectangleDrawer:
+    def __init__(self):
+        self.drawing = False
+        self.rectangles = []
+        self.start_x, self.start_y = -1, -1
+        self.current_frame = None
+        
+    def mouse_callback(self, event, x, y, flags, param):
+        if event == cv2.EVENT_LBUTTONDOWN:
+            self.drawing = True
+            self.start_x, self.start_y = x, y
+            
+        elif event == cv2.EVENT_MOUSEMOVE:
+            if self.drawing:
+                temp_frame = self.current_frame.copy()
+                # Draw all existing rectangles
+                for rect in self.rectangles:
+                    x1, y1, x2, y2 = rect
+                    cv2.rectangle(temp_frame, (x1, y1), (x2, y2), (0, 255, 0), -1)  # Green filled rectangle
+                # Draw current rectangle being drawn
+                cv2.rectangle(temp_frame, (self.start_x, self.start_y), (x, y), (0, 255, 0), -1)
+                cv2.imshow('Draw rectangles. Press SPACE when done', temp_frame)
+                
+        elif event == cv2.EVENT_LBUTTONUP:
+            self.drawing = False
+            end_x, end_y = x, y
+            # Ensure proper rectangle coordinates (top-left to bottom-right)
+            x1 = min(self.start_x, end_x)
+            y1 = min(self.start_y, end_y)
+            x2 = max(self.start_x, end_x)
+            y2 = max(self.start_y, end_y)
+            
+            self.rectangles.append((x1, y1, x2, y2))
+            
+            # Redraw all rectangles
+            temp_frame = self.current_frame.copy()
+            for rect in self.rectangles:
+                x1, y1, x2, y2 = rect
+                cv2.rectangle(temp_frame, (x1, y1), (x2, y2), (0, 255, 0), -1)  # Green filled rectangle
+            
+            cv2.imshow('Draw rectangles. Press SPACE when done', temp_frame)
 
 def select_video_file():
     """Open file dialog to select video file"""
@@ -87,6 +132,87 @@ def get_output_path(input_path):
     
     return output_path
 
+def draw_rectangles(video_path, frame_number=0):
+    """
+    Allow user to draw rectangles on a video frame
+    Returns list of rectangles as (x1, y1, x2, y2)
+    """
+    if not os.path.exists(video_path):
+        print(f"Error: Video file '{video_path}' not found!")
+        return None
+    
+    cap = cv2.VideoCapture(video_path)
+    cap.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
+    ret, frame = cap.read()
+    cap.release()
+    
+    if not ret:
+        print("Error: Could not read frame from video!")
+        return None
+    
+    drawer = RectangleDrawer()
+    drawer.current_frame = frame
+    
+    # Display instructions on the frame
+    instruction_frame = frame.copy()
+    instructions = [
+        "INSTRUCTIONS:",
+        "- Click and drag to draw rectangles",
+        "- Rectangles will be permanently added to video",
+        "- Press SPACE when done",
+        "- Press 'r' to remove last rectangle",
+        "- Press 'c' to clear all rectangles"
+    ]
+    
+    for i, line in enumerate(instructions):
+        y_pos = 30 + i * 25
+        cv2.putText(instruction_frame, line, (10, y_pos), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+        cv2.putText(instruction_frame, line, (10, y_pos), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1)
+    
+    cv2.imshow('Draw rectangles. Press SPACE when done', instruction_frame)
+    cv2.setMouseCallback('Draw rectangles. Press SPACE when done', drawer.mouse_callback)
+    
+    print("\n=== DRAW RECTANGLES ===")
+    print("Click and drag to draw rectangles that will appear in every frame.")
+    print("Press SPACE when done, 'r' to remove last, 'c' to clear all.")
+    
+    while True:
+        key = cv2.waitKey(1) & 0xFF
+        
+        if key == ord(' ') or key == 13:  # SPACE or ENTER
+            if drawer.rectangles:
+                break
+            else:
+                print("Please draw at least one rectangle or press 'q' to skip!")
+                
+        elif key == ord('r'):  # Remove last rectangle
+            if drawer.rectangles:
+                drawer.rectangles.pop()
+                # Redraw frame with remaining rectangles
+                temp_frame = frame.copy()
+                for rect in drawer.rectangles:
+                    x1, y1, x2, y2 = rect
+                    cv2.rectangle(temp_frame, (x1, y1), (x2, y2), (0, 255, 0), -1)
+                cv2.imshow('Draw rectangles. Press SPACE when done', temp_frame)
+                print(f"Removed last rectangle. {len(drawer.rectangles)} rectangles remaining.")
+            else:
+                print("No rectangles to remove!")
+                
+        elif key == ord('c'):  # Clear all rectangles
+            drawer.rectangles = []
+            cv2.imshow('Draw rectangles. Press SPACE when done', frame)
+            print("All rectangles cleared!")
+            
+        elif key == ord('q'):  # Quit without rectangles
+            print("Skipping rectangle drawing.")
+            cv2.destroyAllWindows()
+            return []
+    
+    cv2.destroyAllWindows()
+    print(f"Finished drawing {len(drawer.rectangles)} rectangle(s).")
+    return drawer.rectangles
 
 def select_marker_colours(video_path, frame_number=0):
     """Simple function to select marker colours from a video frame"""
@@ -135,9 +261,10 @@ def select_marker_colours(video_path, frame_number=0):
     cv2.destroyAllWindows()
     return picker.selected_colours
 
-def process_video(input_path, output_path, selected_colours):
+def process_video(input_path, output_path, selected_colours, rectangles):
     """
     Process video to keep ONLY the selected colours, make everything else grayscale
+    Add permanent rectangles to every frame
     """
     cap = cv2.VideoCapture(input_path)
     
@@ -160,6 +287,8 @@ def process_video(input_path, output_path, selected_colours):
         hsv_ranges.append((lower_hsv, upper_hsv))
     
     print(f"Processing video... Keeping {len(selected_colours)} colours visible.")
+    if rectangles:
+        print(f"Adding {len(rectangles)} permanent rectangle(s) to every frame.")
     
     frame_count = 0
     while True:
@@ -188,6 +317,12 @@ def process_video(input_path, output_path, selected_colours):
         
         # where mask is white, keep original colours; elsewhere use grayscale
         result = np.where(combined_mask[:, :, np.newaxis] == 255, frame, gray_background)
+        
+        # Add permanent rectangles to the frame
+        for rect in rectangles:
+            x1, y1, x2, y2 = rect
+            # Draw green filled rectangle
+            cv2.rectangle(result, (x1, y1), (x2, y2), (0, 255, 0), -1)
         
         out.write(result.astype(np.uint8))
         frame_count += 1
@@ -218,8 +353,11 @@ def main():
     print(f"Output will be saved to: {output_path}")
     
     # Select frame
-    frame_num = input("\nEnter frame number to pick colours from (default: 0): ").strip()
+    frame_num = input("\nEnter frame number to work from (default: 0): ").strip()
     frame_num = int(frame_num) if frame_num.isdigit() else 0
+    
+    # Draw rectangles first
+    rectangles = draw_rectangles(video_path, frame_num)
     
     # Select marker colours
     print("\n=== SELECT MARKER COLOURS ===")
@@ -238,13 +376,16 @@ def main():
     process_video(
         video_path, 
         output_path, 
-        selected_colours
+        selected_colours,
+        rectangles
     )
     
     print(f"\n=== COMPLETE ===")
     print(f"Input: {video_path}")
     print(f"Output: {output_path}")
     print(f"Only the {len(selected_colours)} selected marker colours are now visible in colour.")
+    if rectangles:
+        print(f"Added {len(rectangles)} permanent green rectangle(s) to every frame.")
     print("Everything else is grayscale.")
 
 if __name__ == "__main__":

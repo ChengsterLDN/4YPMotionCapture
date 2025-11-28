@@ -2,7 +2,7 @@ import cv2
 import numpy as np
 import math
 
-capture = cv2.VideoCapture('FaresCropped_colours_preserved.mp4')
+capture = cv2.VideoCapture('FaresCropped_colours_preserved_1.mp4')
 
 ret, frame = capture.read()
 if not ret:
