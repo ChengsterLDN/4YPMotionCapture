@@ -13,11 +13,11 @@ def roi_colour(frame):
     # Resize frame for ROI selection
     frame_resized = resize_frame(frame, scale_percent=50)
     
-    print("Select ROI for RED color (SPACE or ENTER to confirm, ESC to skip)")
+    print("Select ROI for RED color (ESC to skip)")
     red_roi = cv2.selectROI('Select RED region', frame_resized, False)
     cv2.destroyWindow('Select RED region')
     
-    print("Select ROI for GREEN color (SPACE or ENTER to confirm, ESC to skip)")
+    print("Select ROI for GREEN color (ESC to skip)")
     green_roi = cv2.selectROI('Select GREEN region', frame_resized, False)
     cv2.destroyWindow('Select GREEN region')
     
@@ -25,7 +25,7 @@ def roi_colour(frame):
     scale_factor = 100 / 50
 
     # RED ROI - two ranges as red hue-value goes beyond 0 or 360 (opencv is actually 0 or 179)
-    red_lower1, red_upper1, red_lower2, red_upper2 = None, None, None, None
+    """ red_lower1, red_upper1, red_lower2, red_upper2 = None, None, None, None
     
     if red_roi != (0, 0, 0, 0):
         x, y, w, h = [int(v * scale_factor) for v in red_roi]
@@ -55,9 +55,10 @@ def roi_colour(frame):
                 red_lower1 = np.array([0, max(50, s_min - 2*s_std), max(50, v_min - 2*v_std)])
                 red_upper1 = np.array([min(10, h_max + h_range), 255, 255])
                 red_lower2 = np.array([max(170, h_min - h_range), max(50, s_min - 2*s_std), max(50, v_min - 2*v_std)])
-                red_upper2 = np.array([179, 255, 255])
+                red_upper2 = np.array([179, 255, 255]) """
 
-    green_lower, green_upper = None, None
+
+    """ green_lower, green_upper = None, None
     
     if green_roi != (0, 0, 0, 0):
         x, y, w, h = [int(v * scale_factor) for v in green_roi]
@@ -78,17 +79,15 @@ def roi_colour(frame):
                                    max(50, v_min - 2*v_std)])
             green_upper = np.array([min(179, h_max + h_range), 
                                    255, 255])
-    
+     """
     # Set defaults if no ROI selected
-    if red_lower1 is None:
-        red_lower1 = np.array([0, 70, 60])
-        red_upper1 = np.array([10, 255, 255])
-        red_lower2 = np.array([170, 70, 60])
-        red_upper2 = np.array([180, 255, 255])
+    red_lower1 = np.array([0, 125, 60])
+    red_upper1 = np.array([10, 255, 255])
+    red_lower2 = np.array([170, 125, 60])
+    red_upper2 = np.array([180, 255, 255])
     
-    if green_lower is None:
-        green_lower = np.array([40, 60, 60])
-        green_upper = np.array([85, 255, 255])
+    green_lower = np.array([40, 60, 60])
+    green_upper = np.array([85, 255, 255])
     
     return {
         'red': (red_lower1, red_upper1, red_lower2, red_upper2),
@@ -126,8 +125,8 @@ def detect_markers(frame, colour_range):
 
     # Denoising via morphological cleanup
     kernel = np.ones((5, 5), np.uint8)
-    marker_mask = cv2.morphologyEx(marker_mask, cv2.MORPH_CLOSE, kernel)
-    marker_mask = cv2.morphologyEx(marker_mask, cv2.MORPH_OPEN, kernel)
+    marker_mask = cv2.morphologyEx(marker_mask, cv2.MORPH_CLOSE, kernel, iterations=3)
+    marker_mask = cv2.morphologyEx(marker_mask, cv2.MORPH_OPEN, kernel, iterations=3)
 
     contours, _ = cv2.findContours(
         marker_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
@@ -191,7 +190,7 @@ def associate_markers(prev_markers, cur_markers, max_dist=50):
 
 # Main
 
-video_path = "Sample2ToneMk1.mp4"   
+video_path = "Sample2ToneMk2.mp4"   
 cap = cv2.VideoCapture(video_path)
 
 ret, frame = cap.read()
@@ -214,14 +213,12 @@ cv2.namedWindow("Sweep", cv2.WINDOW_NORMAL)
 cv2.namedWindow("Red Mask", cv2.WINDOW_NORMAL)
 cv2.namedWindow("Green Mask", cv2.WINDOW_NORMAL)
 cv2.namedWindow("Combined Mask", cv2.WINDOW_NORMAL)
-cv2.namedWindow("HSV Preview", cv2.WINDOW_NORMAL)  
 
 cv2.resizeWindow("Tracking", 640, 480)
 cv2.resizeWindow("Sweep", 640, 480)
 cv2.resizeWindow("Red Mask", 320, 240)
 cv2.resizeWindow("Green Mask", 320, 240)
 cv2.resizeWindow("Combined Mask", 320, 240)
-cv2.resizeWindow("HSV Preview", 320, 240)
 
 while ret:
     markers, red_mask, green_mask, combined_mask = detect_markers(frame, colour_range)
@@ -276,11 +273,6 @@ while ret:
     # cv2.namedWindow("Tracking", cv2.WINDOW_NORMAL)
     # cv2.namedWindow("Sweep", cv2.WINDOW_NORMAL)
 
-    # Create HSV preview (optional)
-    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-    hsv_preview = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
-
-
     display = cv2.resize(frame, None, fx=0.5, fy=0.5, interpolation=cv2.INTER_AREA)
     cv2.imshow("Tracking", display)
     sweepFix = cv2.resize(sweep, None, fx=0.5, fy=0.5, interpolation=cv2.INTER_AREA)
@@ -292,8 +284,6 @@ while ret:
     cv2.imshow("Red Mask", cv2.resize(red_display, (320, 240)))
     cv2.imshow("Green Mask", cv2.resize(green_display, (320, 240)))
     cv2.imshow("Combined Mask", cv2.resize(combined_display, (320, 240)))
-    cv2.imshow("HSV Preview", cv2.resize(hsv_preview, (320, 240)))
-
 
     key = cv2.waitKey(1) & 0xFF
     if key == 27:  # ESC
