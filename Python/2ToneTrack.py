@@ -11,18 +11,17 @@ def roi_colour(frame):
     # User specifies marker colour ranges
     
     # Resize frame for ROI selection
-    frame_resized = resize_frame(frame, scale_percent=50)
+    # frame_resized = resize_frame(frame, scale_percent=50)
     
-    print("Select ROI for RED color (ESC to skip)")
+    """ 
     red_roi = cv2.selectROI('Select RED region', frame_resized, False)
     cv2.destroyWindow('Select RED region')
     
-    print("Select ROI for GREEN color (ESC to skip)")
     green_roi = cv2.selectROI('Select GREEN region', frame_resized, False)
     cv2.destroyWindow('Select GREEN region')
     
     # Scale ROI back to original frame coordinates
-    scale_factor = 100 / 50
+    scale_factor = 100 / 50 """
 
     # RED ROI - two ranges as red hue-value goes beyond 0 or 360 (opencv is actually 0 or 179)
     """ red_lower1, red_upper1, red_lower2, red_upper2 = None, None, None, None
@@ -86,7 +85,7 @@ def roi_colour(frame):
     red_lower2 = np.array([170, 125, 60])
     red_upper2 = np.array([180, 255, 255])
     
-    green_lower = np.array([40, 60, 60])
+    green_lower = np.array([40, 40, 40])
     green_upper = np.array([85, 255, 255])
     
     return {
@@ -117,16 +116,47 @@ def get_colour_masks(frame, colour_range):
 
 # Marker Detection - quadrant two-tone marker
 
-def detect_markers(frame, colour_range):
+def detect_markers(frame, colour_range, min_red = 25000, min_green = 1500, min_combined = 2800):
     red_mask, green_mask = get_colour_masks(frame, colour_range)
 
     # Combine both tones' masks to get  full marker
-    marker_mask = cv2.bitwise_or(red_mask, green_mask)
+    #marker_mask = cv2.bitwise_or(red_mask, green_mask)
 
-    # Denoising via morphological cleanup
-    kernel = np.ones((5, 5), np.uint8)
-    marker_mask = cv2.morphologyEx(marker_mask, cv2.MORPH_CLOSE, kernel, iterations=3)
-    marker_mask = cv2.morphologyEx(marker_mask, cv2.MORPH_OPEN, kernel, iterations=3)
+    # Create filtered masks by applying area thresholds
+    filtered_red = np.zeros_like(red_mask)
+    filtered_green = np.zeros_like(green_mask)
+
+    # Filter red contours by area
+    red_contours, _ = cv2.findContours(red_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    for cnt in red_contours:
+        area = cv2.contourArea(cnt)
+        if area >= min_red:
+            cv2.drawContours(filtered_red, [cnt], -1, 255, -1)
+    
+    # Filter green contours by area
+    green_contours, _ = cv2.findContours(green_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    for cnt in green_contours:
+        area = cv2.contourArea(cnt)
+        if area >= min_green:
+            cv2.drawContours(filtered_green, [cnt], -1, 255, -1)
+
+    # Denoising
+    kernel = np.ones((3, 3), np.uint8)
+    filtered_red = cv2.morphologyEx(filtered_red, cv2.MORPH_CLOSE, kernel, iterations=3)
+    filtered_red = cv2.morphologyEx(filtered_red, cv2.MORPH_OPEN, kernel,iterations=3)
+    
+    filtered_green = cv2.morphologyEx(filtered_green, cv2.MORPH_CLOSE, kernel,iterations=3)
+    filtered_green = cv2.morphologyEx(filtered_green, cv2.MORPH_OPEN, kernel,iterations=3)
+    
+    #filter red
+    red_contours, _ = cv2.findContours(red_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    valid_red_regions = []
+    
+    # Combine filtered masks to get the full marker
+    marker_mask = cv2.bitwise_or(filtered_red, filtered_green)
+    
+    marker_mask = cv2.morphologyEx(marker_mask, cv2.MORPH_CLOSE, kernel,iterations=3)
+    marker_mask = cv2.morphologyEx(marker_mask, cv2.MORPH_OPEN, kernel,iterations=3)
 
     contours, _ = cv2.findContours(
         marker_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
@@ -134,24 +164,27 @@ def detect_markers(frame, colour_range):
 
     markers = []
 
+     # Filter to keep only the two largest contours
     if len(contours) > 0:
         contours = sorted(contours, key=cv2.contourArea, reverse=True)
-        marker_contours = contours[:2]
-
-        for cnt in marker_contours:
-            #area = cv2.contourArea(cnt)
-            #if area < 800:
-            #    continue
+        
+        # Keep only the two largest contours
+        top_contours = contours[:2]
+        
+        for cnt in top_contours:
+            area = cv2.contourArea(cnt)
+            if area < min_combined:
+                continue
 
             (x, y), radius = cv2.minEnclosingCircle(cnt)
             centre = (int(x), int(y))
             radius = int(radius)
 
-            # Orientation estimation (experimental and do we need this?)
+            # Orientation estimation
             mask = np.zeros(marker_mask.shape, dtype=np.uint8)
             cv2.drawContours(mask, [cnt], -1, 255, -1)
 
-            green_only = cv2.bitwise_and(green_mask, green_mask, mask=mask)
+            green_only = cv2.bitwise_and(filtered_green, filtered_green, mask=mask)
             M = cv2.moments(green_only)
 
             orientation = None
@@ -163,10 +196,11 @@ def detect_markers(frame, colour_range):
             markers.append({
                 "centre": centre,
                 "radius": radius,
-                "orientation": orientation
+                "orientation": orientation,
+                "area": area
             })
-
-    return markers, red_mask, green_mask, marker_mask
+     
+    return markers, red_mask, green_mask, filtered_red, filtered_green, marker_mask
 
 # Marker association
 
@@ -221,25 +255,21 @@ cv2.resizeWindow("Green Mask", 320, 240)
 cv2.resizeWindow("Combined Mask", 320, 240)
 
 while ret:
-    markers, red_mask, green_mask, combined_mask = detect_markers(frame, colour_range)
+    markers, red_mask, green_mask, filtered_red, filtered_green, combined_mask = detect_markers(frame, colour_range)
 
-    # Convert masks to 3-channel for colored display
-    red_display = cv2.cvtColor(red_mask, cv2.COLOR_GRAY2BGR)
-    green_display = cv2.cvtColor(green_mask, cv2.COLOR_GRAY2BGR)
+    red_display = cv2.cvtColor(filtered_red, cv2.COLOR_GRAY2BGR)
+    green_display = cv2.cvtColor(filtered_green, cv2.COLOR_GRAY2BGR)
     combined_display = cv2.cvtColor(combined_mask, cv2.COLOR_GRAY2BGR)
+
+    # Make masks actually the colour it is
+    red_display[:, :, 2] = cv2.add(red_display[:, :, 2], filtered_red // 2)
+    red_display[:, :, 0] = cv2.subtract(red_display[:, :, 0], filtered_red // 2)
+    red_display[:, :, 1] = cv2.subtract(red_display[:, :, 1], filtered_red // 2)
     
-    # Colorize the masks for better visualization
-    # Make red mask actually red
-    red_display[:, :, 2] = cv2.add(red_display[:, :, 2], red_mask // 2)
-    red_display[:, :, 0] = cv2.subtract(red_display[:, :, 0], red_mask // 2)
-    red_display[:, :, 1] = cv2.subtract(red_display[:, :, 1], red_mask // 2)
+    green_display[:, :, 1] = cv2.add(green_display[:, :, 1], filtered_green // 2)
+    green_display[:, :, 0] = cv2.subtract(green_display[:, :, 0], filtered_green // 2)
+    green_display[:, :, 2] = cv2.subtract(green_display[:, :, 2], filtered_green // 2)
     
-    # Make green mask actually green
-    green_display[:, :, 1] = cv2.add(green_display[:, :, 1], green_mask // 2)
-    green_display[:, :, 0] = cv2.subtract(green_display[:, :, 0], green_mask // 2)
-    green_display[:, :, 2] = cv2.subtract(green_display[:, :, 2], green_mask // 2)
-    
-    # Make combined mask cyan (red + green)
     combined_display[:, :, 0] = cv2.add(combined_display[:, :, 0], combined_mask // 3)
     combined_display[:, :, 1] = cv2.add(combined_display[:, :, 1], combined_mask // 3)
     combined_display[:, :, 2] = cv2.subtract(combined_display[:, :, 2], combined_mask // 3)
