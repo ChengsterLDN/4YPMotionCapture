@@ -1,111 +1,39 @@
+# 4YP Motion Tracking with Two-Tone
+# J. Cheng
+
 import cv2
 import numpy as np
 from scipy.spatial.distance import cdist
 
+# Makes sure the vid doesn't zoom into like 5 pxls of the bloody video
 def resize_frame(frame, scale_percent=50):
     width = int(frame.shape[1] * scale_percent / 100)
     height = int(frame.shape[0] * scale_percent / 100)
     return cv2.resize(frame, (width, height), interpolation=cv2.INTER_AREA)
 
+# Region of interest i.e. the two-tone marker
 def roi_colour(frame):
-    # User specifies marker colour ranges
-    
-    # Resize frame for ROI selection
-    # frame_resized = resize_frame(frame, scale_percent=50)
-    
-    """ 
-    red_roi = cv2.selectROI('Select RED region', frame_resized, False)
-    cv2.destroyWindow('Select RED region')
-    
-    green_roi = cv2.selectROI('Select GREEN region', frame_resized, False)
-    cv2.destroyWindow('Select GREEN region')
-    
-    # Scale ROI back to original frame coordinates
-    scale_factor = 100 / 50 """
-
-    # RED ROI - two ranges as red hue-value goes beyond 0 or 360 (opencv is actually 0 or 179)
-    """ red_lower1, red_upper1, red_lower2, red_upper2 = None, None, None, None
-    
-    if red_roi != (0, 0, 0, 0):
-        x, y, w, h = [int(v * scale_factor) for v in red_roi]
-        red_sample = frame[y:y+h, x:x+w]
-        
-        if red_sample.size > 0:
-            red_hsv = cv2.cvtColor(red_sample, cv2.COLOR_BGR2HSV)
-            
-            # Calculate min, max and standard deviation
-            h_min, h_max, h_std = np.min(red_hsv[:,:,0]), np.max(red_hsv[:,:,0]), np.std(red_hsv[:,:,0])
-            s_min, s_max, s_std = np.min(red_hsv[:,:,1]), np.max(red_hsv[:,:,1]), np.std(red_hsv[:,:,1])
-            v_min, v_max, v_std = np.min(red_hsv[:,:,2]), np.max(red_hsv[:,:,2]), np.std(red_hsv[:,:,2])
-            
-            # Define ranges (handle red's circular nature in HSV)
-            h_range = 2 * h_std
-            
-            # Red typically has hue values near 0 or near 180
-            if h_max - h_min < 90:  # Not crossing the circular boundary
-                red_lower1 = np.array([max(0, h_min - h_range), 
-                                      max(50, s_min - 2*s_std), 
-                                      max(50, v_min - 2*v_std)])
-                red_upper1 = np.array([min(179, h_max + h_range), 
-                                      255, 255])
-                red_lower2, red_upper2 = None, None
-            else:
-                # Handle case where red wraps around 0/180
-                red_lower1 = np.array([0, max(50, s_min - 2*s_std), max(50, v_min - 2*v_std)])
-                red_upper1 = np.array([min(10, h_max + h_range), 255, 255])
-                red_lower2 = np.array([max(170, h_min - h_range), max(50, s_min - 2*s_std), max(50, v_min - 2*v_std)])
-                red_upper2 = np.array([179, 255, 255]) """
-
-
-    """ green_lower, green_upper = None, None
-    
-    if green_roi != (0, 0, 0, 0):
-        x, y, w, h = [int(v * scale_factor) for v in green_roi]
-        green_sample = frame[y:y+h, x:x+w]
-        
-        if green_sample.size > 0:
-            green_hsv = cv2.cvtColor(green_sample, cv2.COLOR_BGR2HSV)
-            
-            # Calculate min, max and standard deviation
-            h_min, h_max, h_std = np.min(green_hsv[:,:,0]), np.max(green_hsv[:,:,0]), np.std(green_hsv[:,:,0])
-            s_min, s_max, s_std = np.min(green_hsv[:,:,1]), np.max(green_hsv[:,:,1]), np.std(green_hsv[:,:,1])
-            v_min, v_max, v_std = np.min(green_hsv[:,:,2]), np.max(green_hsv[:,:,2]), np.std(green_hsv[:,:,2])
-            
-            # Define ranges
-            h_range = 2 * h_std
-            green_lower = np.array([max(0, h_min - h_range), 
-                                   max(50, s_min - 2*s_std), 
-                                   max(50, v_min - 2*v_std)])
-            green_upper = np.array([min(179, h_max + h_range), 
-                                   255, 255])
-     """
-    # Set defaults if no ROI selected
     red_lower1 = np.array([0, 125, 60])
     red_upper1 = np.array([10, 255, 255])
     red_lower2 = np.array([170, 125, 60])
     red_upper2 = np.array([180, 255, 255])
-    
     green_lower = np.array([40, 40, 40])
     green_upper = np.array([85, 255, 255])
-    
+
+    # perhaps it will be better for this to be manually selected - colour picker?
     return {
         'red': (red_lower1, red_upper1, red_lower2, red_upper2),
         'green': (green_lower, green_upper)
     }
 
-# Colour Segmentation - isolating the two tones (red and green)
-
 def get_colour_masks(frame, colour_range):
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
 
-    # Green
     green_lower, green_upper = colour_range['green']
     green_mask = cv2.inRange(hsv, green_lower, green_upper)
 
-    # Red (two HSV ranges)
     red_lower1, red_upper1, red_lower2, red_upper2 = colour_range['red']
     red_mask1 = cv2.inRange(hsv, red_lower1, red_upper1)
-
     if red_lower2 is not None and red_upper2 is not None:
         red_mask2 = cv2.inRange(hsv, red_lower2, red_upper2)
         red_mask = cv2.bitwise_or(red_mask1, red_mask2)
@@ -114,95 +42,98 @@ def get_colour_masks(frame, colour_range):
 
     return red_mask, green_mask
 
-# Marker Detection - quadrant two-tone marker
+def detect_markers(frame, colour_range,
+                   min_blob_area=1000,
+                   max_pair_dist_ratio=1.5,
+                   min_combined_area=5000):
 
-def detect_markers(frame, colour_range, min_red = 25000, min_green = 1500, min_combined = 2800):
-    red_mask, green_mask = get_colour_masks(frame, colour_range)
+    raw_red, raw_green = get_colour_masks(frame, colour_range)
 
-    # Combine both tones' masks to get  full marker
-    #marker_mask = cv2.bitwise_or(red_mask, green_mask)
+    kernel = np.ones((5, 5), np.uint8)
 
-    # Create filtered masks by applying area thresholds
-    filtered_red = np.zeros_like(red_mask)
-    filtered_green = np.zeros_like(green_mask)
+    # TUNE!!!! 
+    def clean_mask(mask):
+        m = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=2)
+        m = cv2.morphologyEx(m, cv2.MORPH_OPEN, kernel, iterations=2)
+        return m
 
-    # Filter red contours by area
-    red_contours, _ = cv2.findContours(red_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    for cnt in red_contours:
-        area = cv2.contourArea(cnt)
-        if area >= min_red:
-            cv2.drawContours(filtered_red, [cnt], -1, 255, -1)
-    
-    # Filter green contours by area
-    green_contours, _ = cv2.findContours(green_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    for cnt in green_contours:
-        area = cv2.contourArea(cnt)
-        if area >= min_green:
-            cv2.drawContours(filtered_green, [cnt], -1, 255, -1)
+    clean_red = clean_mask(raw_red)
+    clean_green = clean_mask(raw_green)
 
-    # Denoising
-    kernel = np.ones((3, 3), np.uint8)
-    filtered_red = cv2.morphologyEx(filtered_red, cv2.MORPH_CLOSE, kernel, iterations=3)
-    filtered_red = cv2.morphologyEx(filtered_red, cv2.MORPH_OPEN, kernel,iterations=3)
-    
-    filtered_green = cv2.morphologyEx(filtered_green, cv2.MORPH_CLOSE, kernel,iterations=3)
-    filtered_green = cv2.morphologyEx(filtered_green, cv2.MORPH_OPEN, kernel,iterations=3)
-    
-    #filter red
-    red_contours, _ = cv2.findContours(red_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    valid_red_regions = []
-    
-    # Combine filtered masks to get the full marker
-    marker_mask = cv2.bitwise_or(filtered_red, filtered_green)
-    
-    marker_mask = cv2.morphologyEx(marker_mask, cv2.MORPH_CLOSE, kernel,iterations=3)
-    marker_mask = cv2.morphologyEx(marker_mask, cv2.MORPH_OPEN, kernel,iterations=3)
+    def get_blobs(mask):
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        blobs = []
+        for cnt in contours:
+            area = cv2.contourArea(cnt)
+            if area < min_blob_area:
+                continue
+            M = cv2.moments(cnt)
+            if M["m00"] == 0:
+                continue
+            cx = M["m10"] / M["m00"]
+            cy = M["m01"] / M["m00"]
+            (_, _), radius = cv2.minEnclosingCircle(cnt)
+            blobs.append({"centre": (cx, cy), "radius": radius, "area": area, "contour": cnt})
+        return blobs
 
-    contours, _ = cv2.findContours(
-        marker_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
-    )
+    red_blobs = get_blobs(clean_red)
+    green_blobs = get_blobs(clean_green)
 
     markers = []
+    used_green = set()
 
-     # Filter to keep only the two largest contours
-    if len(contours) > 0:
-        contours = sorted(contours, key=cv2.contourArea, reverse=True)
-        
-        # Keep only the two largest contours
-        top_contours = contours[:2]
-        
-        for cnt in top_contours:
-            area = cv2.contourArea(cnt)
-            if area < min_combined:
+    for rb in red_blobs:
+        best_dist = None
+        best_gb_idx = None
+
+        for gi, gb in enumerate(green_blobs):
+            if gi in used_green:
                 continue
+            dist = np.hypot(rb["centre"][0] - gb["centre"][0],
+                            rb["centre"][1] - gb["centre"][1])
+            avg_radius = (rb["radius"] + gb["radius"]) / 2
+            if dist < avg_radius * max_pair_dist_ratio:
+                if best_dist is None or dist < best_dist:
+                    best_dist = dist
+                    best_gb_idx = gi
 
-            (x, y), radius = cv2.minEnclosingCircle(cnt)
-            centre = (int(x), int(y))
-            radius = int(radius)
+        if best_gb_idx is None:
+            continue  # Isolated red — skip
 
-            # Orientation estimation
-            mask = np.zeros(marker_mask.shape, dtype=np.uint8)
-            cv2.drawContours(mask, [cnt], -1, 255, -1)
+        gb = green_blobs[best_gb_idx]
+        used_green.add(best_gb_idx)
 
-            green_only = cv2.bitwise_and(filtered_green, filtered_green, mask=mask)
-            M = cv2.moments(green_only)
+        # Build combined mask for this pair
+        pair_mask = np.zeros(frame.shape[:2], dtype=np.uint8)
+        cv2.drawContours(pair_mask, [rb["contour"]], -1, 255, -1)
+        cv2.drawContours(pair_mask, [gb["contour"]], -1, 255, -1)
+        pair_mask = cv2.morphologyEx(pair_mask, cv2.MORPH_CLOSE, kernel, iterations=2)
 
-            orientation = None
-            if M["m00"] > 0:
-                gx = M["m10"] / M["m00"]
-                gy = M["m01"] / M["m00"]
-                orientation = np.arctan2(gy - y, gx - x)
+        combined_area = cv2.countNonZero(pair_mask)
+        if combined_area < min_combined_area:
+            continue
 
-            markers.append({
-                "centre": centre,
-                "radius": radius,
-                "orientation": orientation,
-                "area": area
-            })
-     
-    return markers, red_mask, green_mask, filtered_red, filtered_green, marker_mask
+        contours2, _ = cv2.findContours(pair_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if not contours2:
+            continue
+        cnt2 = max(contours2, key=cv2.contourArea)
 
-# Marker association
+        (cx, cy), radius = cv2.minEnclosingCircle(cnt2)
+        centre = (int(cx), int(cy))
+
+        # Orientation; basically the angle from marker centre towards green centroid
+        #CORRECTION - do we need this?
+        gx, gy = gb["centre"]
+        orientation = np.arctan2(gy - cy, gx - cx)
+
+        markers.append({
+            "centre": centre,
+            "radius": int(radius),
+            "orientation": orientation,
+            "area": combined_area
+        })
+
+    return markers, raw_red, raw_green, clean_red, clean_green
 
 def associate_markers(prev_markers, cur_markers, max_dist=50):
     if not prev_markers or not cur_markers:
@@ -222,18 +153,18 @@ def associate_markers(prev_markers, cur_markers, max_dist=50):
     return pairs
 
 
-# Main
+# MAIN 
 
-video_path = "Sample2ToneMk2.mp4"   
+# -----------------------------------------------------------------------------------
+video_path = "Sample2ToneMk2.mp4"
 cap = cv2.VideoCapture(video_path)
 
 ret, frame = cap.read()
 if not ret:
-    raise RuntimeError("Could not read video")
+    raise RuntimeError("Could not read video. I.e. make sure the vid file is in the same directory as this python script OR just paste in the whole file path")
 
 colour_range = roi_colour(frame)
 
-# Reset
 cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
 
 h, w = frame.shape[:2]
@@ -241,7 +172,7 @@ sweep = np.zeros((h, w, 3), dtype=np.uint8)
 
 prev_markers = []
 
-# DEBUG
+# DEBUGGING WINDOWS
 cv2.namedWindow("Tracking", cv2.WINDOW_NORMAL)
 cv2.namedWindow("Sweep", cv2.WINDOW_NORMAL)
 cv2.namedWindow("Red Mask", cv2.WINDOW_NORMAL)
@@ -255,70 +186,65 @@ cv2.resizeWindow("Green Mask", 320, 240)
 cv2.resizeWindow("Combined Mask", 320, 240)
 
 while ret:
-    markers, red_mask, green_mask, filtered_red, filtered_green, combined_mask = detect_markers(frame, colour_range)
+    markers, raw_red, raw_green, filtered_red, filtered_green = detect_markers(frame, colour_range)
 
+    # Build combined mask for display
+    combined_mask = cv2.bitwise_or(filtered_red, filtered_green)
+
+    # Coloured mask displays
     red_display = cv2.cvtColor(filtered_red, cv2.COLOR_GRAY2BGR)
     green_display = cv2.cvtColor(filtered_green, cv2.COLOR_GRAY2BGR)
     combined_display = cv2.cvtColor(combined_mask, cv2.COLOR_GRAY2BGR)
 
-    # Make masks actually the colour it is
     red_display[:, :, 2] = cv2.add(red_display[:, :, 2], filtered_red // 2)
     red_display[:, :, 0] = cv2.subtract(red_display[:, :, 0], filtered_red // 2)
     red_display[:, :, 1] = cv2.subtract(red_display[:, :, 1], filtered_red // 2)
-    
+
     green_display[:, :, 1] = cv2.add(green_display[:, :, 1], filtered_green // 2)
     green_display[:, :, 0] = cv2.subtract(green_display[:, :, 0], filtered_green // 2)
     green_display[:, :, 2] = cv2.subtract(green_display[:, :, 2], filtered_green // 2)
-    
+
     combined_display[:, :, 0] = cv2.add(combined_display[:, :, 0], combined_mask // 3)
     combined_display[:, :, 1] = cv2.add(combined_display[:, :, 1], combined_mask // 3)
     combined_display[:, :, 2] = cv2.subtract(combined_display[:, :, 2], combined_mask // 3)
 
-    for idx, m in enumerate(markers):
-
-
+    for m in markers:
+        # Draw marker circle and centre
         cv2.circle(frame, m["centre"], m["radius"], (255, 255, 255), 2)
         cv2.circle(frame, m["centre"], 3, (0, 0, 0), -1)
 
+        # Draw orientation arrow - but this is hella buggy ngl
         if m["orientation"] is not None:
             dx = int(40 * np.cos(m["orientation"]))
             dy = int(40 * np.sin(m["orientation"]))
-            cv2.line(
-                frame,
-                m["centre"],
-                (m["centre"][0] + dx, m["centre"][1] + dy),
-                (255, 0, 0),
-                2
-            )
+            cv2.line(frame, m["centre"],
+                     (m["centre"][0] + dx, m["centre"][1] + dy),
+                     (255, 0, 0), 2)
 
-    # Associate markers between frames
+        cx, cy = m["centre"]
+        cv2.putText(frame, f"({cx}, {cy})", (cx + 10, cy - 10),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+
+    # Sweep trail
     pairs = associate_markers(prev_markers, markers)
-
-    
     for m_prev, m_curr in pairs:
         cv2.line(sweep, m_prev["centre"], m_curr["centre"], (255, 255, 255), 1)
 
-    # Resizable Windows
-
-    # cv2.namedWindow("Tracking", cv2.WINDOW_NORMAL)
-    # cv2.namedWindow("Sweep", cv2.WINDOW_NORMAL)
-
+    # DISPLAY
     display = cv2.resize(frame, None, fx=0.5, fy=0.5, interpolation=cv2.INTER_AREA)
     cv2.imshow("Tracking", display)
-    sweepFix = cv2.resize(sweep, None, fx=0.5, fy=0.5, interpolation=cv2.INTER_AREA)
-    cv2.imshow("Sweep", sweepFix)
 
-    # cv2.imshow("Tracking", frame)
-    #cv2.imshow("Sweep", sweep)
+    sweep_fix = cv2.resize(sweep, None, fx=0.5, fy=0.5, interpolation=cv2.INTER_AREA)
+    cv2.imshow("Sweep", sweep_fix)
 
     cv2.imshow("Red Mask", cv2.resize(red_display, (320, 240)))
     cv2.imshow("Green Mask", cv2.resize(green_display, (320, 240)))
     cv2.imshow("Combined Mask", cv2.resize(combined_display, (320, 240)))
 
     key = cv2.waitKey(1) & 0xFF
-    if key == 27:  # ESC
+    if key == 27:  # ESC to quit
         break
-    elif key == ord('p'):  # Pause
+    elif key == ord('p'):  # P to pause
         print("Paused. Press any key to continue...")
         cv2.waitKey(0)
 
